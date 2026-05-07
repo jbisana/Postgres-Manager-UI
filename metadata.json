@@ -1,0 +1,6 @@
+{
+  "name": "Postgres Manager UI",
+  "description": "A UI for managing PostgreSQL databases, featuring charting, query execution, RBAC, backups, audit logs, and more.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
