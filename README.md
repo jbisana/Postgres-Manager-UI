@@ -12,6 +12,10 @@ The application utilizes a dark-mode first design philosophy:
 - **Typography**:
   - **Interface**: `Inter` (Sans-serif) for clean, versatile UI readability.
   - **Technical Data**: `JetBrains Mono` (Monospaced) for distinct character alignment in SQL, IDs, and metrics.
+ 
+
+<img width="1390" height="1152" alt="Screenshot 2026-05-07 194417" src="https://github.com/user-attachments/assets/7a352169-2a74-47b8-833f-e3c7e8940c7f" />
+
 
 ## 🛠 Features
 
