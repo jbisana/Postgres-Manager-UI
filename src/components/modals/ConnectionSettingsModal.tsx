@@ -15,7 +15,8 @@ export function ConnectionSettingsModal({ isOpen, onClose }: ConnectionSettingsM
   const [isConnecting, setIsConnecting] = useState(false);
   const [status, setStatus] = useState<{ type: 'success' | 'error', message: string } | null>(null);
 
-  const { profiles, addProfile, removeProfile, setActiveProfile, activeProfileId, isConnected, setIsConnected } = useDatabaseStore();
+  const { profiles, addProfile, updateProfile, removeProfile, setActiveProfile, activeProfileId, isConnected, setIsConnected } = useDatabaseStore();
+  const [editingProfileId, setEditingProfileId] = useState<string | null>(null);
 
   // New Profile fields
   const [profileName, setProfileName] = useState('');
@@ -31,10 +32,45 @@ export function ConnectionSettingsModal({ isOpen, onClose }: ConnectionSettingsM
   // URI field
   const [uri, setUri] = useState('');
 
+  const resetForm = () => {
+    setProfileName('');
+    setHost('');
+    setPort('5432');
+    setDatabase('');
+    setUsername('');
+    setPassword('');
+    setSslMode('disable');
+    setUri('');
+    setEditingProfileId(null);
+  };
+
+  const handleEdit = (p: ConnectionProfile) => {
+    setEditingProfileId(p.id);
+    setProfileName(p.name);
+    
+    // Simplistic parsing - might not work for complex URIs
+    if (p.connectionString.startsWith('postgresql://')) {
+      // Need a way to reliably parse this
+      setUri(p.connectionString);
+      setMode('uri');
+    } else {
+      setUri(p.connectionString); // fallback
+      setMode('uri');
+    }
+    setView('new');
+  };
+
   useEffect(() => {
-    if (profiles.length === 0) setView('new');
-    else setView('list');
-  }, [isOpen]); // Reset view when modal opens based on profiles
+    if (isOpen) {
+      if (profiles.length === 0) {
+        setView('new');
+        resetForm();
+      } else {
+        setView('list');
+        resetForm();
+      }
+    }
+  }, [isOpen]); 
 
   const handleConnectProfile = async (profile: ConnectionProfile) => {
     setIsConnecting(true);
@@ -84,14 +120,18 @@ export function ConnectionSettingsModal({ isOpen, onClose }: ConnectionSettingsM
       const data = await response.json();
 
       if (data.success) {
-        setStatus({ type: 'success', message: data.message + (data.version ? ` (${data.version})` : '') });
-        addProfile({ name: profileName || database || 'New Profile', connectionString });
-        // After adding, we want to set it as active, but we don't know its generated ID directly from addProfile without modifying the hook.
-        // We can just rely on the user to click it from the list next time if we don't connect immediately, or we can fetch the last one.
-        // For now, let's keep it simple: just close after 1.5s
+        if (editingProfileId) {
+          updateProfile(editingProfileId, { name: profileName || 'Updated Profile', connectionString });
+          setStatus({ type: 'success', message: 'Profile updated' });
+        } else {
+          addProfile({ name: profileName || database || 'New Profile', connectionString });
+          setStatus({ type: 'success', message: 'Profile added' });
+        }
+        
         setTimeout(() => {
           setView('list');
           setStatus(null);
+          resetForm();
         }, 1500);
       } else {
         setStatus({ type: 'error', message: data.error });
@@ -195,12 +235,20 @@ export function ConnectionSettingsModal({ isOpen, onClose }: ConnectionSettingsM
                                {activeProfileId === p.id && isConnected && <span className="text-[10px] text-emerald-600 font-bold uppercase tracking-wide">Connected</span>}
                             </div>
                          </div>
-                         <button 
-                            onClick={() => removeProfile(p.id)}
-                            className="p-1.5 text-zinc-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition"
-                         >
-                            <Trash2 size={16} />
-                         </button>
+                         <div className="flex items-center gap-1">
+                            <button 
+                               onClick={() => handleEdit(p)}
+                               className="p-1.5 text-zinc-400 hover:text-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 rounded transition text-xs font-medium"
+                            >
+                               Edit
+                            </button>
+                            <button 
+                               onClick={() => removeProfile(p.id)}
+                               className="p-1.5 text-zinc-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition"
+                            >
+                               <Trash2 size={16} />
+                            </button>
+                         </div>
                       </div>
                       <button 
                          onClick={() => handleConnectProfile(p)}

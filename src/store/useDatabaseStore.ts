@@ -12,6 +12,7 @@ interface DatabaseStore {
   connectionString: string | null;
   
   addProfile: (profile: Omit<ConnectionProfile, 'id'>) => void;
+  updateProfile: (id: string, updates: Partial<Omit<ConnectionProfile, 'id'>>) => void;
   removeProfile: (id: string) => void;
   setActiveProfile: (id: string | null) => void;
   
@@ -38,6 +39,17 @@ export const useDatabaseStore = create<DatabaseStore>((set) => ({
     const newProfiles = [...state.profiles, newProfile];
     localStorage.setItem('db_connection_profiles', JSON.stringify(newProfiles));
     return { profiles: newProfiles };
+  }),
+  
+  updateProfile: (id, updates) => set((state) => {
+    const newProfiles = state.profiles.map(p => p.id === id ? { ...p, ...updates } : p);
+    localStorage.setItem('db_connection_profiles', JSON.stringify(newProfiles));
+    const newState: any = { profiles: newProfiles };
+    if (state.activeProfileId === id && updates.connectionString) {
+      localStorage.setItem('db_connection_string', updates.connectionString);
+      newState.connectionString = updates.connectionString;
+    }
+    return newState;
   }),
   
   removeProfile: (id) => set((state) => {

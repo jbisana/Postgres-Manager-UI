@@ -6,3 +6,8 @@ coverage/
 *.log
 .env*
 !.env.example
+API.md
+ARCHITECTURE.md
+CHANGELOG.md
+GEMINI.md
+TODO.md
