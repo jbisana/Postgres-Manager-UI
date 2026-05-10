@@ -11,3 +11,8 @@ ARCHITECTURE.md
 CHANGELOG.md
 GEMINI.md
 TODO.md
+
+# wrangler files
+.wrangler
+.dev.vars*
+!.dev.vars.example
