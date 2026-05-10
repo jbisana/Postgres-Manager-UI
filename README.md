@@ -2,6 +2,8 @@
 
 A full-stack PostgreSQL management application designed for high-performance data auditing, infrastructure troubleshooting, and security management.
 
+Live Demo: https://postgresmanagerui.jbisana89.workers.dev/
+
 ## 🚀 Vision
 The system provides a unified interface for database administrators and developers to manage PostgreSQL environments with a focus on **Security (RLS)**, **Auditing (Logs)**, and **Efficiency (Query Editor)**.
 
