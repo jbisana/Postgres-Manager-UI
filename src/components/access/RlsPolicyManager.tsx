@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useDatabaseStore } from '../../store';
-import { Lock, FileEdit, Trash2, Plus, ShieldCheck, ToggleLeft, ToggleRight, RefreshCw, AlertCircle } from 'lucide-react';
+import { Lock, FileEdit, Trash2, Plus, ShieldCheck, ToggleLeft, ToggleRight, RefreshCw, AlertCircle, Database } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { ConfirmModal } from '../modals/ConfirmModal';
 
@@ -14,7 +14,7 @@ interface Policy {
 }
 
 export function RlsPolicyManager() {
-  const { isConnected, connectionString } = useDatabaseStore();
+  const { isConnected, connectionString, availableDatabases, setAvailableDatabases, setSelectedDatabase } = useDatabaseStore();
   const [tables, setTables] = useState<{name: string, rls_enabled: boolean}[]>([]);
   const [selectedTable, setSelectedTable] = useState<string | null>(null);
   const [policies, setPolicies] = useState<Policy[]>([]);
@@ -33,6 +33,43 @@ export function RlsPolicyManager() {
   const [pWithCheck, setPWithCheck] = useState('');
 
   const [confirmDrop, setConfirmDrop] = useState<string | null>(null);
+
+  const getCurrentDb = () => {
+    if (!connectionString) return null;
+    try {
+      const url = new URL(connectionString);
+      return url.pathname.slice(1);
+    } catch (e) {
+      const match = connectionString.match(/dbname=([^ ]+)/);
+      return match ? match[1] : null;
+    }
+  };
+
+  const selectedDatabaseName = getCurrentDb();
+
+  useEffect(() => {
+    if (isConnected && connectionString && availableDatabases.length === 0) {
+      const fetchDatabases = async () => {
+        try {
+          const res = await fetch('/api/db/query', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              connectionString,
+              query: `SELECT datname FROM pg_database WHERE datistemplate = false;`
+            })
+          });
+          const data = await res.json();
+          if (data.success) {
+            setAvailableDatabases(data.rows.map((r: any) => r.datname));
+          }
+        } catch (e) {
+          console.error("Failed to fetch databases", e);
+        }
+      };
+      fetchDatabases();
+    }
+  }, [isConnected, connectionString]);
 
   useEffect(() => {
     if (isConnected && connectionString) {
@@ -69,8 +106,10 @@ export function RlsPolicyManager() {
       const data = await res.json();
       if (data.success) {
         setTables(data.rows.map((r: any) => ({ name: r.table_name, rls_enabled: r.rls_enabled })));
-        if (data.rows.length > 0 && !selectedTable) {
+        if (data.rows.length > 0 && (!selectedTable || !data.rows.find((r: any) => r.table_name === selectedTable))) {
           setSelectedTable(data.rows[0].table_name);
+        } else if (data.rows.length === 0) {
+          setSelectedTable(null);
         }
       }
     } catch (e) {
@@ -222,10 +261,23 @@ export function RlsPolicyManager() {
       
       {/* Sidebar: Tables */}
       <div className="w-full md:w-64 border-r border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900/50 flex flex-col h-full">
-         <div className="p-4 border-b border-zinc-200 dark:border-zinc-700">
+         <div className="p-4 border-b border-zinc-200 dark:border-zinc-700 flex flex-col gap-3">
             <h3 className="font-semibold text-zinc-800 dark:text-white flex items-center gap-2">
                <ShieldCheck size={18} className="text-emerald-500" /> RLS Manager
             </h3>
+            <div className="flex items-center bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-lg px-2">
+              <Database size={14} className="text-zinc-400 mr-2" />
+              <select 
+                value={selectedDatabaseName || ''} 
+                onChange={(e) => setSelectedDatabase(e.target.value)}
+                className="bg-transparent text-sm border-none focus:ring-0 text-zinc-700 dark:text-zinc-300 py-1.5 pr-8 font-mono w-full outline-none"
+              >
+                {!selectedDatabaseName && <option value="">Select DB</option>}
+                {availableDatabases.map((db: string) => (
+                  <option key={db} value={db}>{db}</option>
+                ))}
+              </select>
+            </div>
          </div>
          <div className="flex-1 overflow-y-auto p-2 space-y-1">
             {tables.map(t => (

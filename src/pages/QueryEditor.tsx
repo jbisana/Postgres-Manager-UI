@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Play, Save, History, Download, GitPullRequest, AlertCircle, Plus, X, Folder, Clock, Bookmark, ChevronRight, ChevronDown, ListFilter } from 'lucide-react';
+import { Play, Save, History, Download, GitPullRequest, AlertCircle, Plus, X, Folder, Clock, Bookmark, ChevronRight, ChevronDown, ListFilter, Database } from 'lucide-react';
 import Editor from '@monaco-editor/react';
 import { cn } from '../lib/utils';
 import { useDatabaseStore } from '../store';
@@ -25,7 +25,7 @@ interface SavedQuery {
 }
 
 export function QueryEditor() {
-  const { isConnected, connectionString } = useDatabaseStore();
+  const { isConnected, connectionString, availableDatabases, setAvailableDatabases, setSelectedDatabase } = useDatabaseStore();
   const [tabs, setTabs] = useState<QueryTab[]>([{ id: '1', name: 'Query 1', query: '-- Write your SQL query here\nSELECT * FROM pg_stat_activity\nLIMIT 10;' }]);
   const [activeTabId, setActiveTabId] = useState<string>('1');
   const [results, setResults] = useState<any[] | null>(null);
@@ -47,6 +47,40 @@ export function QueryEditor() {
     const loadedSaved = localStorage.getItem('db_saved_queries');
     if (loadedSaved) setSavedQueries(JSON.parse(loadedSaved));
   }, []);
+
+  useEffect(() => {
+    if (isConnected && connectionString && availableDatabases.length === 0) {
+      const fetchDatabases = async () => {
+        try {
+          const res = await fetch('/api/db/databases', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ connectionString })
+          });
+          const data = await res.json();
+          if (data.success) {
+            setAvailableDatabases(data.databases);
+          }
+        } catch (e) {
+          console.error("Failed to fetch databases", e);
+        }
+      };
+      fetchDatabases();
+    }
+  }, [isConnected, connectionString]);
+
+  const getCurrentDb = () => {
+    if (!connectionString) return null;
+    try {
+      const url = new URL(connectionString);
+      return url.pathname.slice(1);
+    } catch (e) {
+      const match = connectionString.match(/dbname=([^ ]+)/);
+      return match ? match[1] : null;
+    }
+  };
+
+  const selectedDatabaseName = getCurrentDb();
 
   const saveHistory = (newHistory: QueryHistory[]) => {
     setHistory(newHistory);
@@ -184,6 +218,21 @@ export function QueryEditor() {
           >
             <Folder size={16} />
           </button>
+          
+          <div className="flex items-center bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg px-2 mr-2">
+            <Database size={14} className="text-zinc-400 mr-2" />
+            <select 
+              value={selectedDatabaseName || ''} 
+              onChange={(e) => setSelectedDatabase(e.target.value)}
+              className="bg-transparent text-sm border-none focus:ring-0 text-zinc-700 dark:text-zinc-300 py-1 pr-8 font-mono"
+            >
+              {!selectedDatabaseName && <option value="">Select DB</option>}
+              {availableDatabases.map(db => (
+                <option key={db} value={db}>{db}</option>
+              ))}
+            </select>
+          </div>
+
           <button 
             onClick={handleRun}
             disabled={isRunning}

@@ -5,7 +5,7 @@
 import { createBrowserRouter } from 'react-router-dom';
 import Layout from '../pages/_layout';
 import { Dashboard } from '../pages/Dashboard';
-import { DatabaseExplorer } from '../pages/DatabaseExplorer';
+import { Explorer } from '../pages/Explorer';
 import { AccessControl } from '../pages/AccessControl';
 
 export const router = createBrowserRouter([
@@ -14,7 +14,7 @@ export const router = createBrowserRouter([
     element: <Layout />,
     children: [
       { path: '/', element: <Dashboard /> },
-      { path: '/explorer', element: <DatabaseExplorer /> },
+      { path: '/explorer', element: <Explorer /> },
       { path: '/access', element: <AccessControl /> }
     ]
   }

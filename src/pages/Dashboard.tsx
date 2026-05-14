@@ -149,7 +149,7 @@ export function Dashboard() {
             <div className="bg-white dark:bg-zinc-800 p-5 rounded-xl border border-zinc-200 dark:border-zinc-700 shadow-sm flex flex-col">
               <h3 className="text-sm font-semibold text-zinc-900 dark:text-white mb-6">Current Connections by State</h3>
               {connectionData.length > 0 ? (
-                <div className="h-64 w-full">
+                <div className="h-64 w-full min-w-0">
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={connectionData}>
                       <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#27272a" opacity={0.3} />
@@ -171,7 +171,7 @@ export function Dashboard() {
             <div className="bg-white dark:bg-zinc-800 p-5 rounded-xl border border-zinc-200 dark:border-zinc-700 shadow-sm flex flex-col">
               <h3 className="text-sm font-semibold text-zinc-900 dark:text-white mb-6">Read/Write by Table (I/O)</h3>
               {queryData.length > 0 ? (
-                <div className="h-64 w-full">
+                <div className="h-64 w-full min-w-0">
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={queryData}>
                       <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#27272a" opacity={0.3} />

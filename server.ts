@@ -43,6 +43,160 @@ async function startServer() {
     }
   });
 
+  app.post("/api/db/databases", async (req, res) => {
+    const { connectionString } = req.body;
+    if (!connectionString) return res.status(400).json({ success: false, error: "Connection string required" });
+
+    const client = new Client({ connectionString, connectionTimeoutMillis: 5000 });
+    try {
+      await client.connect();
+      const result = await client.query(`
+        SELECT datname as name
+        FROM pg_database
+        WHERE datistemplate = false
+        ORDER BY datname;
+      `);
+      await client.end();
+      res.json({ success: true, databases: result.rows.map(r => r.name) });
+    } catch(err: any) {
+      console.error(err);
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.post("/api/db/databases/create", async (req, res) => {
+    const { connectionString, dbName } = req.body;
+    if (!connectionString || !dbName) return res.status(400).json({ success: false, error: "Missing parameters" });
+
+    const client = new Client({ connectionString, connectionTimeoutMillis: 5000 });
+    try {
+      await client.connect();
+      // Use double quotes for dbName to handle special characters/casing
+      await client.query(`CREATE DATABASE "${dbName}"`);
+      await client.end();
+      res.json({ success: true, message: `Database ${dbName} created successfully` });
+    } catch(err: any) {
+      console.error(err);
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.post("/api/db/databases/delete", async (req, res) => {
+    const { connectionString, dbName } = req.body;
+    if (!connectionString || !dbName) return res.status(400).json({ success: false, error: "Missing parameters" });
+
+    const client = new Client({ connectionString, connectionTimeoutMillis: 5000 });
+    try {
+      await client.connect();
+      // Terminate other connections first
+      await client.query(`
+        SELECT pg_terminate_backend(pid) 
+        FROM pg_stat_activity 
+        WHERE datname = $1 AND pid <> pg_backend_pid()
+      `, [dbName]);
+      
+      await client.query(`DROP DATABASE "${dbName}"`);
+      await client.end();
+      res.json({ success: true, message: `Database ${dbName} deleted successfully` });
+    } catch(err: any) {
+      console.error(err);
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.post("/api/db/users/create", async (req, res) => {
+    const { connectionString, username, password, role, databases } = req.body;
+    if (!connectionString || !username || !password) return res.status(400).json({ success: false, error: "Missing parameters" });
+
+    const client = new Client({ connectionString, connectionTimeoutMillis: 5000 });
+    try {
+      await client.connect();
+      // Using double quotes and basic escaping (in real apps rely on strict validation)
+      const safeUsername = username.replace(/"/g, '""');
+      const safePassword = password.replace(/'/g, "''");
+      
+      let createQuery = `CREATE ROLE "${safeUsername}" WITH LOGIN PASSWORD '${safePassword}'`;
+      if (role === 'admin') createQuery += " SUPERUSER";
+      else if (role === 'manager') createQuery += " CREATEDB CREATEROLE";
+      
+      await client.query(createQuery);
+
+      if (databases && Array.isArray(databases)) {
+        for (const db of databases) {
+          const safeDb = db.replace(/"/g, '""');
+          try {
+            await client.query(`REVOKE CONNECT ON DATABASE "${safeDb}" FROM PUBLIC`);
+          } catch(e) {
+             console.warn(`Failed to revoke from PUBLIC on ${safeDb}`, e);
+          }
+          try {
+            await client.query(`GRANT CONNECT ON DATABASE "${safeDb}" TO "${safeUsername}"`);
+          } catch(e) {
+             console.warn(`Failed to grant on ${safeDb} for ${safeUsername}`, e);
+          }
+        }
+      }
+
+      await client.end();
+      res.json({ success: true, message: `User ${username} created.` });
+    } catch(err: any) {
+      console.error(err);
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.post("/api/db/users/edit", async (req, res) => {
+    const { connectionString, username, password, role, databases, allDatabases } = req.body;
+    if (!connectionString || !username) return res.status(400).json({ success: false, error: "Missing parameters" });
+
+    const client = new Client({ connectionString, connectionTimeoutMillis: 5000 });
+    try {
+      await client.connect();
+      const safeUsername = username.replace(/"/g, '""');
+      
+      if (password) {
+        const safePassword = password.replace(/'/g, "''");
+        await client.query(`ALTER ROLE "${safeUsername}" WITH PASSWORD '${safePassword}'`);
+      }
+      
+      if (role) {
+        if (role === 'admin') {
+          await client.query(`ALTER ROLE "${safeUsername}" WITH SUPERUSER CREATEDB CREATEROLE`);
+        } else if (role === 'manager') {
+          await client.query(`ALTER ROLE "${safeUsername}" WITH NOSUPERUSER CREATEDB CREATEROLE`);
+        } else {
+          await client.query(`ALTER ROLE "${safeUsername}" WITH NOSUPERUSER NOCREATEDB NOCREATEROLE`);
+        }
+      }
+
+      if (allDatabases && Array.isArray(allDatabases) && databases && Array.isArray(databases)) {
+        for (const db of allDatabases) {
+          const safeDb = db.replace(/"/g, '""');
+          try {
+            await client.query(`REVOKE CONNECT ON DATABASE "${safeDb}" FROM PUBLIC`);
+          } catch (e) {
+            console.warn(`Failed to revoke from PUBLIC on ${safeDb}`, e);
+          }
+          try {
+            if (databases.includes(db)) {
+              await client.query(`GRANT CONNECT ON DATABASE "${safeDb}" TO "${safeUsername}"`);
+            } else {
+              await client.query(`REVOKE CONNECT ON DATABASE "${safeDb}" FROM "${safeUsername}"`);
+            }
+          } catch (e) {
+            console.warn(`Failed to grant/revoke on ${safeDb} for ${safeUsername}`, e);
+          }
+        }
+      }
+      
+      await client.end();
+      res.json({ success: true, message: `User ${username} updated.` });
+    } catch(err: any) {
+      console.error(err);
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
   app.post("/api/db/schema", async (req, res) => {
     const { connectionString } = req.body;
     if (!connectionString) return res.status(400).json({ success: false, error: "Connection string required" });
@@ -76,7 +230,12 @@ async function startServer() {
             FROM   pg_index i
             JOIN   pg_attribute a ON a.attrelid = i.indrelid
                                 AND a.attnum = ANY(i.indkey)
-            WHERE  i.indrelid = $1::regclass
+            WHERE  i.indrelid = (
+              SELECT c.oid 
+              FROM pg_class c 
+              JOIN pg_namespace n ON n.oid = c.relnamespace 
+              WHERE n.nspname = 'public' AND c.relname = $1
+            )
             AND    i.indisprimary;
           `, [tableName]);
           pkColumns = pkResult.rows.map((r: any) => r.attname);

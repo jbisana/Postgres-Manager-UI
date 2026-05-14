@@ -208,7 +208,7 @@ export function ConnectionSettingsModal({ isOpen, onClose }: ConnectionSettingsM
              <div className="flex items-center justify-between">
                 <h3 className="font-semibold text-zinc-800 dark:text-white">Saved Connections</h3>
                 <button
-                   onClick={() => setView('new')}
+                   onClick={() => { resetForm(); setView('new'); }}
                    className="flex items-center gap-1.5 text-sm font-medium text-emerald-600 hover:text-emerald-700 dark:text-emerald-400 dark:hover:text-emerald-300 bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-900/20 dark:hover:bg-emerald-900/40 px-3 py-1.5 rounded-lg transition"
                 >
                    <Plus size={16} /> Add New

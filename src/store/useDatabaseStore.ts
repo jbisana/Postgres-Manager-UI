@@ -18,6 +18,11 @@ interface DatabaseStore {
   
   isConnected: boolean;
   setIsConnected: (connected: boolean) => void;
+
+  availableDatabases: string[];
+  setAvailableDatabases: (dbs: string[]) => void;
+  selectedDatabase: string | null;
+  setSelectedDatabase: (dbName: string) => void;
 }
 
 const loadProfiles = (): ConnectionProfile[] => {
@@ -33,6 +38,37 @@ export const useDatabaseStore = create<DatabaseStore>((set) => ({
   profiles: loadProfiles(),
   activeProfileId: localStorage.getItem('db_active_profile_id') || null,
   connectionString: localStorage.getItem('db_connection_string') || null,
+  
+  availableDatabases: [],
+  setAvailableDatabases: (dbs) => set({ availableDatabases: dbs }),
+  selectedDatabase: null,
+  setSelectedDatabase: (dbName) => set((state) => {
+    if (!state.connectionString) return state;
+    
+    let newConnectionString = state.connectionString;
+    try {
+      // Try to update URI if it is one
+      const url = new URL(state.connectionString);
+      url.pathname = '/' + dbName;
+      newConnectionString = url.toString();
+    } catch (e) {
+      // Fallback for key-value pairs
+      if (state.connectionString.includes('dbname=')) {
+        newConnectionString = state.connectionString.replace(/dbname=[^ ]+/, `dbname=${dbName}`);
+      } else {
+        newConnectionString = state.connectionString + ` dbname=${dbName}`;
+      }
+    }
+    
+    const newState = { 
+      selectedDatabase: dbName,
+      connectionString: newConnectionString
+    };
+    
+    localStorage.setItem('db_connection_string', newConnectionString);
+    
+    return newState;
+  }),
   
   addProfile: (profile) => set((state) => {
     const newProfile = { ...profile, id: Date.now().toString() };
@@ -73,7 +109,7 @@ export const useDatabaseStore = create<DatabaseStore>((set) => ({
     if (profile) {
       localStorage.setItem('db_active_profile_id', id);
       localStorage.setItem('db_connection_string', profile.connectionString);
-      return { activeProfileId: id, connectionString: profile.connectionString };
+      return { activeProfileId: id, connectionString: profile.connectionString, selectedDatabase: null, availableDatabases: [] };
     }
     return state;
   }),

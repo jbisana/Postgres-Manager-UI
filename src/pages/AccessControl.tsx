@@ -9,63 +9,121 @@ import { GrantRevokeWizard } from '../components/access/GrantRevokeWizard';
 import { RlsPolicyManager } from '../components/access/RlsPolicyManager';
 
 export function AccessControl() {
-  const { isConnected } = useDatabaseStore();
+  const { isConnected, connectionString, availableDatabases } = useDatabaseStore();
   const [activeTab, setActiveTab] = useState<'roles' | 'wizard' | 'rls'>('roles');
   
   const [isUserModalOpen, setIsUserModalOpen] = useState(false);
   const [isEditUser, setIsEditUser] = useState(false);
+  const [selectedUser, setSelectedUser] = useState<any>(null);
+  
   const [isPermissionModalOpen, setIsPermissionModalOpen] = useState(false);
   const [isConfirmRevoke, setIsConfirmRevoke] = useState(false);
+  const [userToRevoke, setUserToRevoke] = useState<string | null>(null);
   
   const [users, setUsers] = useState<any[]>([]);
   const [isLoadingRoles, setIsLoadingRoles] = useState(false);
   
-  useEffect(() => {
-    if (isConnected) {
-      const fetchRoles = async () => {
-        setIsLoadingRoles(true);
-        try {
-          const res = await fetch('/api/db/query', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-               connectionString: useDatabaseStore.getState().connectionString,
-               query: `
-                 SELECT 
-                   rolname as name,
-                   rolsuper as is_superuser,
-                   rolcanlogin as can_login,
-                   rolcreatedb as can_create_db,
-                   rolcreaterole as can_create_role
-                 FROM pg_roles
-                 WHERE rolname !~ '^pg_'
-                 ORDER BY rolname;
-               `
-            })
-          });
-          const data = await res.json();
-          if (data.success) {
-            setUsers(data.rows.map((row: any) => ({
-              id: row.name,
-              name: row.name,
-              email: '-',
-              role: row.is_superuser ? 'admin' : (row.can_create_role || row.can_create_db ? 'manager' : 'user'),
-              ...row
-            })));
-          }
-        } catch (e) {
-          console.error(e);
-        } finally {
-          setIsLoadingRoles(false);
-        }
-      }
-      fetchRoles();
-    } else {
+  const fetchRoles = async () => {
+    if (!isConnected || !connectionString) {
       setUsers([]);
+      return;
     }
-  }, [isConnected]);
+    setIsLoadingRoles(true);
+    try {
+      const res = await fetch('/api/db/query', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+           connectionString,
+           query: `
+             SELECT 
+               rolname as name,
+               rolsuper as is_superuser,
+               rolcanlogin as can_login,
+               rolcreatedb as can_create_db,
+               rolcreaterole as can_create_role,
+               (
+                 SELECT array_agg(d.datname)
+                 FROM pg_database d
+                 WHERE d.datistemplate = false 
+                   AND has_database_privilege(r.rolname, d.datname, 'CONNECT')
+               ) as databases
+             FROM pg_roles r
+             WHERE r.rolname !~ '^pg_'
+             ORDER BY r.rolname;
+           `
+        })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setUsers(data.rows.map((row: any) => ({
+          id: row.name,
+          name: row.name,
+          email: '-',
+          role: row.is_superuser ? 'admin' : (row.can_create_role || row.can_create_db ? 'manager' : 'user'),
+          ...row
+        })));
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsLoadingRoles(false);
+    }
+  };
 
-  const permissions = [];
+  const fetchDatabases = async () => {
+    if (!isConnected || !connectionString) return;
+    try {
+      const res = await fetch('/api/db/query', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          connectionString,
+          query: `SELECT datname FROM pg_database WHERE datistemplate = false;`
+        })
+      });
+      const data = await res.json();
+      if (data.success) {
+        useDatabaseStore.getState().setAvailableDatabases(data.rows.map((r: any) => r.datname));
+      }
+    } catch (e) {
+      console.error('Failed to fetch databases', e);
+    }
+  };
+
+  useEffect(() => {
+    fetchRoles();
+    if (availableDatabases.length === 0) {
+      fetchDatabases();
+    }
+  }, [isConnected, connectionString]);
+
+  const handleRevokeUser = async () => {
+    if (!userToRevoke || !connectionString) return;
+    try {
+      const res = await fetch('/api/db/query', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          connectionString,
+          query: `DROP ROLE "${userToRevoke.replace(/"/g, '""')}"`
+        })
+      });
+      const data = await res.json();
+      if (!data.success) {
+        alert(data.error || "Failed to drop user (may own objects)");
+      } else {
+        fetchRoles();
+      }
+    } catch (e: any) {
+      alert(e.message || "Error revoking user");
+    } finally {
+      setIsConfirmRevoke(false);
+      setUserToRevoke(null);
+    }
+  };
+
+  const permissions: any[] = []; // Not implemented in current scope
 
   return (
     <div className="p-6 md:p-8 max-w-7xl mx-auto space-y-8 text-zinc-900 dark:text-zinc-100">
@@ -115,10 +173,10 @@ export function AccessControl() {
           <div className="flex items-center justify-between">
             <h2 className="text-lg font-semibold text-zinc-900 dark:text-white font-sans">Active Users</h2>
             <button 
-              onClick={() => { setIsEditUser(false); setIsUserModalOpen(true); }}
+              onClick={() => { setSelectedUser(null); setIsEditUser(false); setIsUserModalOpen(true); }}
               className="flex items-center gap-2 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-sm transition font-medium"
             >
-              <UserPlus size={16} /> Invite User
+              <UserPlus size={16} /> Add User
             </button>
           </div>
           
@@ -128,16 +186,17 @@ export function AccessControl() {
                 <tr>
                   <th className="px-4 py-3 font-medium">User</th>
                   <th className="px-4 py-3 font-medium">Role</th>
+                  <th className="px-4 py-3 font-medium">Databases</th>
                   <th className="px-4 py-3 font-medium">Status</th>
                   <th className="px-4 py-3 font-medium text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-100 dark:divide-zinc-700/50">
                 {isLoadingRoles && (
-                  <tr><td colSpan={4} className="px-4 py-8 text-center text-zinc-500 italic">Loading roles...</td></tr>
+                  <tr><td colSpan={5} className="px-4 py-8 text-center text-zinc-500 italic">Loading roles...</td></tr>
                 )}
                 {!isLoadingRoles && users.length === 0 && (
-                  <tr><td colSpan={4} className="px-4 py-8 text-center text-zinc-500 italic">No users available.</td></tr>
+                  <tr><td colSpan={5} className="px-4 py-8 text-center text-zinc-500 italic">No users available.</td></tr>
                 )}
                 {!isLoadingRoles && users.map(user => (
                   <tr key={user.id} className="hover:bg-zinc-50 dark:hover:bg-zinc-700/30 text-zinc-800 dark:text-zinc-200">
@@ -154,6 +213,17 @@ export function AccessControl() {
                         {!user.is_superuser && !user.can_create_role && !user.can_create_db && <span className="text-zinc-400 italic text-xs">Standard Role</span>}
                       </div>
                     </td>
+                    <td className="px-4 py-3 text-sm max-w-xs">
+                      {(Array.isArray(user.databases) ? user.databases : typeof user.databases === 'string' ? user.databases.replace(/^{|}$/g, '').split(',').filter(Boolean) : []).length > 0 ? (
+                        <div className="flex flex-wrap gap-1">
+                          {(Array.isArray(user.databases) ? user.databases : typeof user.databases === 'string' ? user.databases.replace(/^{|}$/g, '').split(',').filter(Boolean) : []).map((db: string) => (
+                            <span key={db} className="px-1.5 py-0.5 bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 rounded text-xs font-mono border border-zinc-200 dark:border-zinc-700">{db}</span>
+                          ))}
+                        </div>
+                      ) : (
+                        <span className="text-zinc-400">-</span>
+                      )}
+                    </td>
                     <td className="px-4 py-3">
                       {user.can_login ? (
                         <div className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 text-[10px] font-bold uppercase tracking-wider">
@@ -167,16 +237,16 @@ export function AccessControl() {
                     </td>
                     <td className="px-4 py-3 flex justify-end gap-2 text-zinc-500">
                        <button 
-                         onClick={() => { setIsEditUser(true); setIsUserModalOpen(true); }}
+                         onClick={() => { setSelectedUser(user); setIsEditUser(true); setIsUserModalOpen(true); }}
                          className="p-1.5 hover:text-emerald-600 transition rounded hover:bg-emerald-50 dark:hover:bg-emerald-900/20" 
                          title="Edit Access"
                        >
                         <Edit3 size={16} />
                       </button>
                       <button 
-                        onClick={() => setIsConfirmRevoke(true)}
+                        onClick={() => { setUserToRevoke(user.name); setIsConfirmRevoke(true); }}
                         className="p-1.5 hover:text-red-600 transition rounded hover:bg-red-50 dark:hover:bg-red-900/20" 
-                        title="Revoke App Access"
+                        title="Revoke / Drop User"
                       >
                         <Trash2 size={16} />
                       </button>
@@ -236,15 +306,23 @@ export function AccessControl() {
       
       {activeTab === 'rls' && <RlsPolicyManager />}
       
-      <UserRoleModal isOpen={isUserModalOpen} onClose={() => setIsUserModalOpen(false)} isEdit={isEditUser} />
+      <UserRoleModal 
+        isOpen={isUserModalOpen} 
+        onClose={() => setIsUserModalOpen(false)} 
+        isEdit={isEditUser}
+        user={selectedUser}
+        connectionString={connectionString}
+        availableDatabases={availableDatabases}
+        onSuccess={fetchRoles}
+      />
       <PermissionModal isOpen={isPermissionModalOpen} onClose={() => setIsPermissionModalOpen(false)} />
       <ConfirmModal 
         isOpen={isConfirmRevoke} 
-        onCancel={() => setIsConfirmRevoke(false)} 
-        onConfirm={() => {}} 
-        title="Revoke Access" 
-        message="Are you sure you want to revoke this user's access? They will no longer be able to log in or access the database." 
-        confirmLabel="Revoke Access"
+        onCancel={() => { setIsConfirmRevoke(false); setUserToRevoke(null); }} 
+        onConfirm={handleRevokeUser} 
+        title="Revoke / Drop User" 
+        message={`Are you sure you want to drop user "${userToRevoke}"? This action cannot be undone and will fail if the user owns any objects.`} 
+        confirmLabel="Drop User"
       />
     </div>
   );

@@ -10,7 +10,7 @@ import { ConfirmModal } from '../components/modals/ConfirmModal';
 import { useDatabaseStore } from '../store';
 
 export function Explorer() {
-  const { isConnected, connectionString } = useDatabaseStore();
+  const { isConnected, connectionString, availableDatabases, setAvailableDatabases, selectedDatabase, setSelectedDatabase } = useDatabaseStore();
   const [dbs, setDbs] = useState<DBType[]>([]);
   const [selectedDb, setSelectedDb] = useState<DBType | null>(null);
   const [selectedTable, setSelectedTable] = useState<Table | null>(null);
@@ -18,6 +18,7 @@ export function Explorer() {
   
   const [tableData, setTableData] = useState<any[]>([]);
   const [isLoadingSchema, setIsLoadingSchema] = useState(false);
+  const [isLoadingDatabases, setIsLoadingDatabases] = useState(false);
   const [isLoadingData, setIsLoadingData] = useState(false);
   const [errorInfo, setErrorInfo] = useState<string | null>(null);
 
@@ -31,6 +32,9 @@ export function Explorer() {
   const [isConfirmDropColumn, setIsConfirmDropColumn] = useState(false);
   const [isConfirmDropRow, setIsConfirmDropRow] = useState(false);
   const [isCreateDatabase, setIsCreateDatabase] = useState(false);
+  const [newDbName, setNewDbName] = useState('');
+  const [isConfirmDeleteDb, setIsConfirmDeleteDb] = useState(false);
+  const [dbToDelete, setDbToDelete] = useState<string | null>(null);
   const [isImportExportOpen, setIsImportExportOpen] = useState(false);
   const [inlineEditCell, setInlineEditCell] = useState<{rowIndex: number, columnName: string, value: string} | null>(null);
 
@@ -76,6 +80,86 @@ export function Explorer() {
     }
   };
 
+  const fetchDatabases = async () => {
+    if (!isConnected || !connectionString) return;
+    setIsLoadingDatabases(true);
+    try {
+      const res = await fetch('/api/db/databases', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ connectionString })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setAvailableDatabases(data.databases);
+      }
+    } catch (e) {
+      console.error("Failed to fetch databases", e);
+    } finally {
+      setIsLoadingDatabases(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isConnected && connectionString) {
+      if (availableDatabases.length === 0) {
+        fetchDatabases();
+      }
+    }
+  }, [isConnected, connectionString]);
+
+  const handleCreateDatabase = async () => {
+    if (!isConnected || !connectionString || !newDbName) return;
+    setIsLoadingDatabases(true);
+    try {
+      const res = await fetch('/api/db/databases/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ connectionString, dbName: newDbName })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setIsCreateDatabase(false);
+        setNewDbName('');
+        await fetchDatabases();
+      } else {
+        alert(data.error || 'Failed to create database');
+      }
+    } catch (e: any) {
+      alert(e.message || 'Error creating database');
+    } finally {
+      setIsLoadingDatabases(false);
+    }
+  };
+
+  const handleDeleteDatabase = async () => {
+    if (!isConnected || !connectionString || !dbToDelete) return;
+    setIsLoadingDatabases(true);
+    try {
+      const res = await fetch('/api/db/databases/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ connectionString, dbName: dbToDelete })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setIsConfirmDeleteDb(false);
+        setDbToDelete(null);
+        if (selectedDatabase === dbToDelete) {
+           // If we deleted the active db, we should probably reset
+           // But normally we'd be connected to 'postgres' to delete others
+        }
+        await fetchDatabases();
+      } else {
+        alert(data.error || 'Failed to delete database');
+      }
+    } catch (e: any) {
+      alert(e.message || 'Error deleting database');
+    } finally {
+      setIsLoadingDatabases(false);
+    }
+  };
+
   useEffect(() => {
     if (isConnected && connectionString) {
       const fetchSchema = async () => {
@@ -91,18 +175,15 @@ export function Explorer() {
           if (data.success && data.tables) {
             let dbName = 'Connected Database';
             try {
-              // Try to parse the connection string to get the database name
-              // Matches postgres://user:pass@host:port/dbname or similar
               const url = new URL(connectionString);
               dbName = url.pathname.slice(1) || 'Connected Database';
             } catch (e) {
-              // If not a URL, might be key=value format
               const match = connectionString.match(/dbname=([^ ]+)/);
               if (match) dbName = match[1];
             }
 
             const newDb: DBType = {
-              id: 'connected_db',
+              id: 'connected_db_' + dbName,
               name: dbName,
               status: 'online',
               version: 'PostgreSQL 15',
@@ -318,34 +399,51 @@ export function Explorer() {
         </div>
         
         <div className="flex-1 overflow-y-auto p-2">
-          {isLoadingSchema && (
+          {(isLoadingSchema || isLoadingDatabases) && (
             <div className="text-sm text-zinc-500 text-center py-4 flex items-center justify-center gap-2">
-              <div className="w-4 h-4 border-2 border-zinc-300 border-t-emerald-600 rounded-full animate-spin"></div> Loading Schema...
+              <div className="w-4 h-4 border-2 border-zinc-300 border-t-emerald-600 rounded-full animate-spin"></div> Loading...
             </div>
           )}
-          {!isLoadingSchema && dbs.length > 0 && (
-            <div className="px-2 py-1 text-[10px] uppercase font-bold text-zinc-400 dark:text-zinc-500 tracking-wider mb-1 font-sans">Databases</div>
-          )}
-          {!isLoadingSchema && dbs.map(db => (
-            <div key={db.id} className="mb-2">
+          {!isLoadingDatabases && availableDatabases.length > 0 && (
+            <div className="px-2 py-1 flex items-center justify-between group/header">
+              <div className="text-[10px] uppercase font-bold text-zinc-400 dark:text-zinc-500 tracking-wider font-sans">Databases</div>
               <button 
-                onClick={() => {
-                  setSelectedDb(db);
-                  setSelectedTable(db.tables[0] || null);
-                }}
-                className={cn(
-                  "w-full flex items-center gap-2 px-2 py-1.5 rounded text-sm text-left font-bold font-mono tracking-tight",
-                  selectedDb?.id === db.id ? "text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/10 border border-emerald-100 dark:border-emerald-800/50" : "text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800"
-                )}
+                onClick={() => setIsCreateDatabase(true)}
+                className="opacity-0 group-hover/header:opacity-100 p-0.5 text-zinc-400 hover:text-emerald-500 transition"
               >
-                <Database size={16} className={cn(selectedDb?.id === db.id ? "text-emerald-500" : "text-zinc-400")} />
-                {db.name}
+                <Plus size={12} />
               </button>
+            </div>
+          )}
+          {!isLoadingDatabases && availableDatabases.map(dbName => (
+            <div key={dbName} className="mb-2 group/db">
+              <div className="flex items-center gap-1">
+                <button 
+                  onClick={() => {
+                    setSelectedDatabase(dbName);
+                  }}
+                  className={cn(
+                    "flex-1 flex items-center gap-2 px-2 py-1.5 rounded text-sm text-left font-bold font-mono tracking-tight",
+                    selectedDb?.name === dbName ? "text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/10 border border-emerald-100 dark:border-emerald-800/50" : "text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 font-normal"
+                  )}
+                >
+                  <Database size={16} className={cn(selectedDb?.name === dbName ? "text-emerald-500" : "text-zinc-400")} />
+                  {dbName}
+                </button>
+                {/* Don't allow deleting current connected DB or 'postgres' maybe? For simplicity, just allow but show warning */}
+                <button 
+                  onClick={() => { setDbToDelete(dbName); setIsConfirmDeleteDb(true); }}
+                  className="opacity-0 group-hover/db:opacity-100 p-1.5 text-zinc-400 hover:text-red-500 transition"
+                  title="Drop Database"
+                >
+                  <Trash2 size={14} />
+                </button>
+              </div>
               
-              {selectedDb?.id === db.id && (
+              {selectedDb?.name === dbName && (
                 <div className="ml-4 mt-1 space-y-0.5 border-l border-zinc-200 dark:border-zinc-800 pl-2">
                   <div className="px-2 py-1 text-[10px] uppercase font-bold text-zinc-400 dark:text-zinc-500 tracking-wider font-sans">Tables</div>
-                  {db.tables.map(table => (
+                  {selectedDb.tables.map(table => (
                     <button
                       key={table.id}
                       onClick={() => setSelectedTable(table)}
@@ -678,11 +776,31 @@ export function Explorer() {
       />
       <ConfirmModal 
         isOpen={isCreateDatabase} 
-        onCancel={() => setIsCreateDatabase(false)} 
-        onConfirm={() => {}} 
+        onCancel={() => { setIsCreateDatabase(false); setNewDbName(''); }} 
+        onConfirm={handleCreateDatabase} 
         title="Create Database" 
-        message="Simulated connection to cluster. Database will be provisioned." 
-        confirmLabel="Provision DB"
+        message={
+          <div className="space-y-4">
+            <p className="text-sm text-zinc-600 dark:text-zinc-400">Enter a name for the new database:</p>
+            <input 
+              autoFocus
+              type="text"
+              value={newDbName}
+              onChange={(e) => setNewDbName(e.target.value)}
+              placeholder="database_name"
+              className="w-full bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-md py-2 px-3 text-sm focus:ring-1 focus:ring-emerald-500 outline-none text-zinc-800 dark:text-zinc-200 font-mono"
+            />
+          </div>
+        } 
+        confirmLabel="Create"
+      />
+      <ConfirmModal 
+        isOpen={isConfirmDeleteDb} 
+        onCancel={() => { setIsConfirmDeleteDb(false); setDbToDelete(null); }} 
+        onConfirm={handleDeleteDatabase} 
+        title="Drop Database" 
+        message={`Are you sure you want to drop the database "${dbToDelete}"? This action cannot be undone and all data will be permanently deleted. Other connections to this database will be terminated.`} 
+        confirmLabel="Drop Database"
       />
       <ImportExportModal 
         isOpen={isImportExportOpen}
