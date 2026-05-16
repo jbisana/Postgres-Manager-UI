@@ -9,6 +9,7 @@ import { Backups } from './pages/Backups';
 import { VersionControl } from './pages/VersionControl';
 import { PostgrestManager } from './pages/PostgrestManager';
 import { Extensions } from './pages/Extensions';
+import { Health } from './pages/Health';
 import { Menu } from 'lucide-react';
 import { ConnectionSettingsModal } from './components/modals/ConnectionSettingsModal';
 
@@ -28,6 +29,7 @@ export default function App() {
       case 'audit': return <AuditLogs />;
       case 'backups': return <Backups />;
       case 'version': return <VersionControl />;
+      case 'health': return <Health />;
       default: return <Dashboard />;
     }
   };

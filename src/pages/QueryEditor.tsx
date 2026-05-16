@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { Play, Save, History, Download, GitPullRequest, AlertCircle, Plus, X, Folder, Clock, Bookmark, ChevronRight, ChevronDown, ListFilter, Database } from 'lucide-react';
+import { Play, Save, History, Download, GitPullRequest, AlertCircle, Plus, X, Folder, Clock, Bookmark, ChevronRight, ChevronDown, ListFilter, Database, CheckCircle, Wand2, WrapText, Loader2 } from 'lucide-react';
 import Editor from '@monaco-editor/react';
 import { cn } from '../lib/utils';
 import { useDatabaseStore } from '../store';
+import { format } from 'sql-formatter';
 
 interface QueryTab {
   id: string;
@@ -24,6 +25,17 @@ interface SavedQuery {
   query: string;
 }
 
+interface QueryErrorDetail {
+  message: string;
+  code?: string;
+  detail?: string;
+  hint?: string;
+  position?: string;
+  where?: string;
+  table?: string;
+  constraint?: string;
+}
+
 export function QueryEditor() {
   const { isConnected, connectionString, availableDatabases, setAvailableDatabases, setSelectedDatabase } = useDatabaseStore();
   const [tabs, setTabs] = useState<QueryTab[]>([{ id: '1', name: 'Query 1', query: '-- Write your SQL query here\nSELECT * FROM pg_stat_activity\nLIMIT 10;' }]);
@@ -31,7 +43,7 @@ export function QueryEditor() {
   const [results, setResults] = useState<any[] | null>(null);
   const [fields, setFields] = useState<any[] | null>(null);
   const [isRunning, setIsRunning] = useState(false);
-  const [errorInfo, setErrorInfo] = useState<string | null>(null);
+  const [errorInfo, setErrorInfo] = useState<QueryErrorDetail | null>(null);
   const [rowCount, setRowCount] = useState<number | null>(null);
   
   const [leftSidebarOpen, setLeftSidebarOpen] = useState(true);
@@ -40,6 +52,10 @@ export function QueryEditor() {
   // Load state from local storage or set initial
   const [history, setHistory] = useState<QueryHistory[]>([]);
   const [savedQueries, setSavedQueries] = useState<SavedQuery[]>([]);
+  const [showAIPrompt, setShowAIPrompt] = useState(false);
+  const [aiPrompt, setAiPrompt] = useState('');
+  const [aiModel, setAiModel] = useState('gemini-3.1-pro-preview');
+  const [isAiLoading, setIsAiLoading] = useState(false);
 
   useEffect(() => {
     const loadedHistory = localStorage.getItem('db_query_history');
@@ -140,7 +156,10 @@ export function QueryEditor() {
             duration
           }, ...history]);
         } else {
-          setErrorInfo(data.error);
+          setErrorInfo({
+            message: data.error,
+            ...data.details
+          });
           setResults(null);
           setFields(null);
           setRowCount(null);
@@ -153,7 +172,7 @@ export function QueryEditor() {
           }, ...history]);
         }
       } catch (err: any) {
-        setErrorInfo(err.message || 'Network error running query');
+        setErrorInfo({ message: err.message || 'Network error running query' });
         setResults(null);
         setFields(null);
         setRowCount(null);
@@ -207,6 +226,57 @@ export function QueryEditor() {
     URL.revokeObjectURL(url);
   };
 
+  const handleFormat = () => {
+    try {
+      const formatted = format(activeTab.query, { language: 'postgresql' });
+      updateActiveQuery(formatted);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleAIGenerate = async () => {
+    if (!aiPrompt.trim()) return;
+    setIsAiLoading(true);
+    try {
+      let schemaStr = '';
+      if (isConnected && connectionString) {
+        try {
+          const res = await fetch('/api/db/schema', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json'},
+            body: JSON.stringify({ connectionString })
+          });
+          const data = await res.json();
+          if (data.success && data.tables) {
+            schemaStr = data.tables.map((t: any) => `Table ${t.name}: ${t.columns.map((c: any) => `${c.name} (${c.type})`).join(', ')}`).join('\\n');
+          }
+        } catch(e) {}
+      }
+
+      const res = await fetch('/api/ai/query', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: aiPrompt, schema: schemaStr, model: aiModel })
+      });
+      const data = await res.json();
+      if (data.success) {
+        let text = data.query;
+        // Strip markdown if it was wrapped despite instructions
+        text = text.replace(/```sql\\n/g, '').replace(/```/g, '');
+        updateActiveQuery(activeTab.query + (activeTab.query.trim() ? '\\n\\n' : '') + text.trim());
+        setShowAIPrompt(false);
+        setAiPrompt('');
+      } else {
+        alert(data.error || 'AI request failed');
+      }
+    } catch (e: any) {
+      alert(e.message);
+    } finally {
+      setIsAiLoading(false);
+    }
+  };
+
   return (
     <div className="h-full flex flex-col text-zinc-900 dark:text-zinc-100">
       <div className="flex-none p-4 border-b border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#09090b] flex justify-between items-center z-10 transition-colors">
@@ -243,6 +313,14 @@ export function QueryEditor() {
           </button>
           <button onClick={handleSaveQuery} className="flex items-center gap-2 px-3 py-2 bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-300 rounded-lg text-sm font-medium transition">
             <Save size={16} /> Save
+          </button>
+          
+          <button onClick={() => setShowAIPrompt(!showAIPrompt)} className={cn("flex items-center gap-2 px-3 py-2 border rounded-lg text-sm font-medium transition ml-2", showAIPrompt ? "bg-purple-100 border-purple-200 text-purple-700 dark:bg-purple-900/40 dark:border-purple-800/60 dark:text-purple-300" : "bg-zinc-100 dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-300")}>
+            <Wand2 size={16} className={cn(showAIPrompt && "animate-pulse")} /> AI Assistant
+          </button>
+          
+          <button onClick={handleFormat} className="flex items-center gap-2 px-3 py-2 bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-300 rounded-lg text-sm font-medium transition" title="Format SQL (Shift+Alt+F)">
+            <WrapText size={16} /> Format
           </button>
         </div>
         <div className="flex gap-2 text-zinc-500">
@@ -340,6 +418,55 @@ export function QueryEditor() {
           <div className="flex-1 flex flex-col lg:flex-row min-h-0 bg-white dark:bg-[#09090b]">
             {/* Editor Area */}
             <div className="flex-1 flex flex-col border-b lg:border-b-0 lg:border-r border-zinc-200 dark:border-zinc-800 relative shadow-inner">
+              
+              {showAIPrompt && (
+                <div className="absolute top-4 left-4 right-4 z-20 bg-white dark:bg-zinc-900 border border-purple-200 dark:border-purple-800/40 rounded-xl shadow-xl overflow-hidden animate-in slide-in-from-top-4 fade-in">
+                  <div className="flex items-center px-4 py-3 bg-gradient-to-r from-purple-50 to-white dark:from-purple-900/20 dark:to-zinc-900 border-b border-purple-100 dark:border-purple-900/30">
+                    <Wand2 size={16} className="text-purple-500 mr-2" />
+                    <span className="font-semibold text-sm text-purple-900 dark:text-purple-300">Generate SQL with AI</span>
+                    <select
+                      value={aiModel}
+                      onChange={(e) => setAiModel(e.target.value)}
+                      className="ml-4 bg-white dark:bg-zinc-800 border border-purple-200 dark:border-purple-800 text-xs text-zinc-700 dark:text-zinc-300 rounded px-2 py-1 outline-none focus:ring-1 focus:ring-purple-500"
+                    >
+                      <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro Preview</option>
+                      <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash Lite</option>
+                      <option value="gemini-3-flash-preview">Gemini 3 Flash Preview</option>
+                      <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
+                      <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
+                      <option value="gemini-2.5-flash-lite">Gemini 2.5 Flash Lite</option>
+                    </select>
+                    <button onClick={() => setShowAIPrompt(false)} className="ml-auto text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200">
+                      <X size={16} />
+                    </button>
+                  </div>
+                  <div className="p-4">
+                    <textarea 
+                      value={aiPrompt}
+                      onChange={(e) => setAiPrompt(e.target.value)}
+                      placeholder="e.g. Find all users who signed up last week but haven't made any purchases..."
+                      className="w-full h-24 p-3 bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-lg text-sm resize-none focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent text-zinc-800 dark:text-zinc-200"
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && e.metaKey) {
+                          handleAIGenerate();
+                        }
+                      }}
+                    />
+                    <div className="flex justify-between items-center mt-3 text-xs">
+                      <span className="text-zinc-500">Cmd+Enter to generate</span>
+                      <button 
+                        onClick={handleAIGenerate}
+                        disabled={isAiLoading || !aiPrompt.trim()}
+                        className="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white rounded-lg font-bold transition shadow-sm"
+                      >
+                        {isAiLoading ? <Loader2 size={14} className="animate-spin" /> : <Wand2 size={14} />}
+                        {isAiLoading ? 'Generating...' : 'Generate Query'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               <Editor
                 height="100%"
                 defaultLanguage="pgsql"
@@ -373,9 +500,36 @@ export function QueryEditor() {
                 {errorInfo && (
                   <div className="m-4 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 p-4 rounded border border-red-200 dark:border-red-900/40 text-sm flex items-start gap-3 whitespace-pre-wrap font-mono shadow-sm">
                     <AlertCircle size={18} className="mt-0.5 flex-shrink-0" />
-                    <div className="space-y-1">
+                    <div className="space-y-2 w-full">
                       <p className="font-bold uppercase text-[10px] tracking-widest border-b border-red-200 dark:border-red-900/40 pb-1 mb-2">Execution Error</p>
-                      <span className="text-[11px] leading-relaxed italic">{errorInfo}</span>
+                      <div className="text-[12px] leading-relaxed font-bold bg-white/50 dark:bg-black/20 p-2 rounded">{errorInfo.message}</div>
+                      
+                      {Object.entries({
+                        Code: errorInfo.code,
+                        Detail: errorInfo.detail,
+                        Hint: errorInfo.hint,
+                        Position: errorInfo.position,
+                        Where: errorInfo.where,
+                        Table: errorInfo.table,
+                        Constraint: errorInfo.constraint
+                      }).filter(([_, v]) => v).length > 0 && (
+                        <div className="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 mt-2 text-[11px] opacity-90 border-t border-red-200 dark:border-red-900/40 pt-2">
+                          {Object.entries({
+                            Code: errorInfo.code,
+                            Detail: errorInfo.detail,
+                            Hint: errorInfo.hint,
+                            Position: errorInfo.position,
+                            Where: errorInfo.where,
+                            Table: errorInfo.table,
+                            Constraint: errorInfo.constraint
+                          }).map(([k, v]) => v && (
+                            <React.Fragment key={k}>
+                              <div className="font-bold text-red-900 dark:text-red-300 uppercase text-[9px] tracking-wider py-0.5">{k}</div>
+                              <div className="py-0.5 break-all">{v}</div>
+                            </React.Fragment>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
@@ -384,6 +538,22 @@ export function QueryEditor() {
                   <div className="h-full flex flex-col items-center justify-center text-zinc-500 gap-4 opacity-40">
                     <Play size={48} className="text-zinc-600" />
                     <p className="text-[10px] font-bold uppercase tracking-[0.2em] italic">Execute query to visualize dataset</p>
+                  </div>
+                )}
+
+                {results && !isRunning && results.length === 0 && (!fields || fields.length === 0) && (
+                  <div className="m-4 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400 p-4 rounded border border-emerald-200 dark:border-emerald-900/40 text-sm flex items-start gap-3 font-mono shadow-sm">
+                    <CheckCircle size={18} className="mt-0.5 flex-shrink-0" />
+                    <div className="space-y-1 w-full">
+                      <p className="font-bold uppercase text-[10px] tracking-widest border-b border-emerald-200 dark:border-emerald-900/40 pb-1 mb-2">Query Successful</p>
+                      <span className="text-[12px] leading-relaxed">Query execution completed successfully. {rowCount !== null ? `Affected rows: ${rowCount}` : ''}</span>
+                    </div>
+                  </div>
+                )}
+                
+                {results && !isRunning && results.length === 0 && fields && fields.length > 0 && (
+                  <div className="h-full flex items-center justify-center text-zinc-500 text-[10px] font-bold uppercase tracking-[0.2em] italic font-mono opacity-50">
+                    Query completed: 0 rows returned
                   </div>
                 )}
                 
@@ -420,12 +590,6 @@ export function QueryEditor() {
                         ))}
                       </tbody>
                     </table>
-                  </div>
-                )}
-                
-                {results && !isRunning && results.length === 0 && (
-                  <div className="h-full flex items-center justify-center text-zinc-500 text-[10px] font-bold uppercase tracking-[0.2em] italic font-mono opacity-50">
-                    Query sequence terminated: 0 nodes affected
                   </div>
                 )}
               </div>

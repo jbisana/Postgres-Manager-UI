@@ -2,7 +2,10 @@ import express from "express";
 import { createServer as createViteServer } from "vite";
 import path from "path";
 import pg from "pg";
+import { GoogleGenAI } from "@google/genai";
+
 const { Client } = pg;
+const ai = process.env.GEMINI_API_KEY ? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }) : null;
 
 async function startServer() {
   const app = express();
@@ -281,7 +284,19 @@ async function startServer() {
       res.json({ success: true, rows: result.rows, fields: result.fields, rowCount: result.rowCount });
     } catch(err: any) {
       console.error(err);
-      res.status(500).json({ success: false, error: err.message });
+      res.status(500).json({ 
+        success: false, 
+        error: err.message,
+        details: {
+          code: err.code,
+          detail: err.detail,
+          hint: err.hint,
+          position: err.position,
+          where: err.where,
+          table: err.table,
+          constraint: err.constraint
+        }
+      });
     }
   });
 
@@ -504,6 +519,32 @@ async function startServer() {
       `);
       await client.end();
       res.json({ success: true, extensions: result.rows });
+    } catch(err: any) {
+      console.error(err);
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.post("/api/ai/query", async (req, res) => {
+    const { prompt, schema, model } = req.body;
+    if (!ai) {
+      return res.status(400).json({ success: false, error: "Gemini API Key is not configured." });
+    }
+    
+    try {
+      const systemInstruction = `You are an expert PostgreSQL DBA. You must output ONLY RAW SQL CODE based on the user's prompt. Do NOT wrap the sql in markdown blocks. Do NOT provide explanations. Use the provided database schema to generate accurate queries.`;
+      
+      const userPrompt = `Database Schema Context:\n${schema || 'No schema provided'}\n\nUser Request: ${prompt}`;
+      
+      const response = await ai.models.generateContent({
+        model: model || 'gemini-2.5-flash',
+        contents: userPrompt,
+        config: {
+          systemInstruction,
+        }
+      });
+      
+      res.json({ success: true, query: response.text });
     } catch(err: any) {
       console.error(err);
       res.status(500).json({ success: false, error: err.message });
