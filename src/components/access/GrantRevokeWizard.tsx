@@ -26,6 +26,30 @@ const PrivilegesMap: Record<TargetType, string[]> = {
   'DEFAULT_FUNCTIONS': ['EXECUTE', 'ALL PRIVILEGES'],
 };
 
+const getDbName = (connStr: string) => {
+  if (!connStr) return '';
+  try {
+    return new URL(connStr).pathname.slice(1);
+  } catch {
+    const match = connStr.match(/dbname=([^ ]+)/);
+    return match ? match[1] : '';
+  }
+};
+
+const setDbName = (connStr: string, dbName: string) => {
+  if (!connStr) return '';
+  try {
+    const url = new URL(connStr);
+    url.pathname = '/' + dbName;
+    return url.toString();
+  } catch {
+    if (connStr.includes('dbname=')) {
+      return connStr.replace(/dbname=[^ ]+/, `dbname=${dbName}`);
+    }
+    return connStr + ` dbname=${dbName}`;
+  }
+};
+
 export function GrantRevokeWizard() {
   const { isConnected, connectionString } = useDatabaseStore();
   const [step, setStep] = useState(1);
@@ -35,6 +59,8 @@ export function GrantRevokeWizard() {
   const [selectedRoles, setSelectedRoles] = useState<string[]>([]);
   
   const [targetType, setTargetType] = useState<TargetType>('TABLE');
+  const [wizardDb, setWizardDb] = useState<string>('');
+  
   const [databases, setDatabases] = useState<string[]>([]);
   const [schemas, setSchemas] = useState<string[]>([]);
   const [tables, setTables] = useState<{schema: string, name: string}[]>([]);
@@ -48,9 +74,16 @@ export function GrantRevokeWizard() {
 
   useEffect(() => {
     if (isConnected && connectionString) {
-      fetchData();
+      setWizardDb(getDbName(connectionString));
+      fetchGlobalData();
     }
   }, [isConnected, connectionString]);
+
+  useEffect(() => {
+    if (isConnected && connectionString && wizardDb) {
+      fetchDatabaseData();
+    }
+  }, [isConnected, connectionString, wizardDb]);
 
   useEffect(() => {
     // Reset selected targets and privileges when targetType changes
@@ -58,8 +91,9 @@ export function GrantRevokeWizard() {
     setPrivileges([]);
   }, [targetType]);
 
-  const fetchData = async () => {
+  const fetchGlobalData = async () => {
     try {
+      if (!connectionString) return;
       const dbRes = await fetch('/api/db/query', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -68,14 +102,6 @@ export function GrantRevokeWizard() {
       const dbData = await dbRes.json();
       if (dbData.success) setDatabases(dbData.rows.map((r: any) => r.datname));
 
-      const schemaRes = await fetch('/api/db/query', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ connectionString, query: `SELECT nspname FROM pg_namespace WHERE nspname NOT LIKE 'pg_%' AND nspname != 'information_schema' ORDER BY nspname;` })
-      });
-      const schemaData = await schemaRes.json();
-      if (schemaData.success) setSchemas(schemaData.rows.map((r: any) => r.nspname));
-
       const roleRes = await fetch('/api/db/query', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -83,16 +109,33 @@ export function GrantRevokeWizard() {
       });
       const roleData = await roleRes.json();
       if (roleData.success) setRoles(roleData.rows.map((r: any) => r.rolname));
+    } catch (e) {
+      console.error('Failed to fetch global data for wizard', e);
+    }
+  };
+
+  const fetchDatabaseData = async () => {
+    try {
+      if (!connectionString || !wizardDb) return;
+      const targetConnString = setDbName(connectionString, wizardDb);
+
+      const schemaRes = await fetch('/api/db/query', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ connectionString: targetConnString, query: `SELECT nspname FROM pg_namespace WHERE nspname NOT LIKE 'pg_%' AND nspname != 'information_schema' ORDER BY nspname;` })
+      });
+      const schemaData = await schemaRes.json();
+      if (schemaData.success) setSchemas(schemaData.rows.map((r: any) => r.nspname));
 
       const tableRes = await fetch('/api/db/query', {
          method: 'POST',
          headers: { 'Content-Type': 'application/json' },
-         body: JSON.stringify({ connectionString, query: `SELECT schemaname, tablename FROM pg_tables WHERE schemaname NOT IN ('pg_catalog', 'information_schema') ORDER BY schemaname, tablename;` })
+         body: JSON.stringify({ connectionString: targetConnString, query: `SELECT schemaname, tablename FROM pg_tables WHERE schemaname NOT IN ('pg_catalog', 'information_schema') ORDER BY schemaname, tablename;` })
       });
       const tableData = await tableRes.json();
       if (tableData.success) setTables(tableData.rows.map((r: any) => ({ schema: r.schemaname, name: r.tablename })));
     } catch (e) {
-      console.error('Failed to fetch data for wizard', e);
+      console.error('Failed to fetch database specific data for wizard', e);
     }
   };
 
@@ -165,15 +208,16 @@ export function GrantRevokeWizard() {
 
   const handleExecute = async () => {
     const sql = getGeneratedSql();
-    if (!sql) return;
+    if (!sql || !connectionString || !wizardDb) return;
 
     setIsExecuting(true);
     setResult(null);
     try {
+      const targetConnString = setDbName(connectionString, wizardDb);
       const res = await fetch('/api/db/query', {
          method: 'POST',
          headers: { 'Content-Type': 'application/json' },
-         body: JSON.stringify({ connectionString, query: sql })
+         body: JSON.stringify({ connectionString: targetConnString, query: sql })
       });
       const data = await res.json();
       if (data.success) {
@@ -296,7 +340,18 @@ export function GrantRevokeWizard() {
         {step === 2 && (
            <div className="space-y-4 animate-in fade-in slide-in-from-right-4">
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                <h4 className="font-medium text-zinc-800 dark:text-zinc-200">Select Target Objects</h4>
+                <div className="flex items-center gap-3">
+                  <h4 className="font-medium text-zinc-800 dark:text-zinc-200">Select Target Objects</h4>
+                  {targetType !== 'DATABASE' && databases.length > 0 && (
+                    <select
+                      value={wizardDb}
+                      onChange={(e) => setWizardDb(e.target.value)}
+                      className="bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 text-xs font-medium text-zinc-700 dark:text-zinc-300 rounded px-2 py-1 focus:ring-1 focus:ring-emerald-500 outline-none"
+                    >
+                      {databases.map(d => <option key={d} value={d}>{d}</option>)}
+                    </select>
+                  )}
+                </div>
                 <div className="flex items-center gap-2 bg-zinc-100 dark:bg-zinc-900 p-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700">
                   <Layers size={14} className="text-zinc-400 ml-1" />
                   <select 
